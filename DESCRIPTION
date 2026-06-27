@@ -1,7 +1,7 @@
 Package: encharter
 Type: Package
 Title: Enhanced Office Open XML Charting for 'openxlsx2'
-Version: 0.9
+Version: 0.9.1
 Language: en-US
 Authors@R: c(
     person("Jan Marvin", "Garbuszus", email = "jan.garbuszus@ruhr-uni-bochum.de", role = c("aut", "cre"))
@@ -19,11 +19,10 @@ LinkingTo: openxlsx2
 Imports: R6, openxlsx2 (>= 1.26)
 Suggests: testthat (>= 3.0.0), viridisLite
 Config/testthat/edition: 3
-Config/roxygen2/version: 7.3.3.9000
-RoxygenNote: 7.3.3
+Config/roxygen2/version: 8.0.0
 NeedsCompilation: yes
-Packaged: 2026-04-28 20:26:08 UTC; janmarvingarbuszus
+Packaged: 2026-06-27 11:08:51 UTC; janmarvingarbuszus
 Author: Jan Marvin Garbuszus [aut, cre]
 Maintainer: Jan Marvin Garbuszus <jan.garbuszus@ruhr-uni-bochum.de>
 Repository: CRAN
-Date/Publication: 2026-04-29 18:30:08 UTC
+Date/Publication: 2026-06-27 11:30:02 UTC

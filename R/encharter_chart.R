@@ -404,8 +404,8 @@ Chart <- R6::R6Class(
         if (length(col_idx) > 0) {
           col_idx   <- col_idx[1]
           data_vals <- wd_orig[[h_label]]
-          name      <- if (has_header) sprintf("'%s'!%s", wb_sheet, dims_mat[1, col_idx]) else NULL
-          data      <- sprintf("'%s'!%s:%s", wb_sheet, dims_mat[start_row, col_idx], dims_mat[nrow(dims_mat), col_idx])
+          name      <- if (has_header) sprintf("%s!%s", wb_sheet, dims_mat[1, col_idx]) else NULL
+          data      <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, col_idx], dims_mat[nrow(dims_mat), col_idx])
         }
 
         # 2. Resolve Category (label / X-Axis)
@@ -413,7 +413,7 @@ Chart <- R6::R6Class(
         if (length(cat_idx) > 0) {
           cat_idx  <- cat_idx[1]
           cat_vals <- wd_orig[[c_label]]
-          label    <- sprintf("'%s'!%s:%s", wb_sheet, dims_mat[start_row, cat_idx], dims_mat[nrow(dims_mat), cat_idx])
+          label    <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, cat_idx], dims_mat[nrow(dims_mat), cat_idx])
         }
 
         # 3. Resolve Z-Data (Bubble Size)
@@ -421,7 +421,7 @@ Chart <- R6::R6Class(
         if (length(z_idx) > 0) {
           z_idx  <- z_idx[1]
           z_vals <- wd_orig[[z_label]]
-          weight <- sprintf("'%s'!%s:%s", wb_sheet, dims_mat[start_row, z_idx], dims_mat[nrow(dims_mat), z_idx])
+          weight <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, z_idx], dims_mat[nrow(dims_mat), z_idx])
         }
       }
 
@@ -940,7 +940,7 @@ Chart <- R6::R6Class(
             cat_node <- xml_add_child(ser, "c:cat")
 
             if (!is.null(s$cat_cache) && inherits(s$cat_cache, c("Date", "POSIXt"))) {
-              # Date/datetime categories -> numRef with Excel serial conversion
+              # Date/datetime categories -> numRef with OOXML serial conversion
               ref_node <- xml_add_child(cat_node, "c:numRef")
               xml_add_child(ref_node, "c:f", s$label)
               private$render_num_cache(ref_node, s$cat_cache)
@@ -1263,7 +1263,7 @@ Chart <- R6::R6Class(
     },
 
     # Emit a c:numCache block into ref_node.
-    # Date/POSIXt values are converted to Excel serials via convert_to_excel_date.
+    # Date/POSIXt values are converted to OOXML serials via convert_to_excel_date.
     # Plain numeric values are written as-is.
     render_num_cache = function(ref_node, vals) {
       cache <- xml_add_child(ref_node, "c:numCache")

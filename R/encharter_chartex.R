@@ -94,15 +94,15 @@ ChartEx <- R6::R6Class(
         h_idx <- which(col_names == h_label)
         if (length(h_idx) > 0) {
           h_idx  <- h_idx[1]
-          name <- if (has_header) sprintf("'%s'!%s", wb_sheet, wb_dims[1, h_idx]) else NULL
-          data   <- sprintf("'%s'!%s:%s", wb_sheet, wb_dims[start_row, h_idx], wb_dims[nrow(wb_dims), h_idx])
+          name <- if (has_header) sprintf("%s!%s", wb_sheet, wb_dims[1, h_idx]) else NULL
+          data   <- sprintf("%s!%s:%s", wb_sheet, wb_dims[start_row, h_idx], wb_dims[nrow(wb_dims), h_idx])
         }
 
         # 3. Resolve Category (label)
         c_idx <- which(col_names == c_label)
         if (length(c_idx) > 0) {
           c_idx <- c_idx[1]
-          label <- sprintf("'%s'!%s:%s", wb_sheet, wb_dims[start_row, c_idx], wb_dims[nrow(wb_dims), c_idx])
+          label <- sprintf("%s!%s:%s", wb_sheet, wb_dims[start_row, c_idx], wb_dims[nrow(wb_dims), c_idx])
         }
       }
 
@@ -289,7 +289,7 @@ ChartEx <- R6::R6Class(
 
           # 3. Binning (Choice: binSize or binCount)
           } else if (length(s$binning) > 0) {
-            # Mapping full names to Excel's internal single-char codes
+            # Mapping full names to OOXML's internal single-char codes
             int_closed <- switch(as.character(s$binning$intervalClosed %||% ""),
                                 "left"  = "l",
                                 "right" = "r",
@@ -305,7 +305,7 @@ ChartEx <- R6::R6Class(
               xml_set_attr(bn, "overflow", as.character(s$binning$overflow))
             }
 
-            # Child Elements use 'val' attribute per Excel XML sample
+            # Child Elements use 'val' attribute per spreadsheet XML sample
             if (!is.null(s$binning$binSize)) {
               xml_add_child(bn, "cx:binSize", val = as.character(s$binning$binSize))
             } else if (!is.null(s$binning$binCount)) {
