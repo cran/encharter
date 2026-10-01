@@ -87,6 +87,8 @@ ENCHARTER_EXTENDED <- c(
 #'   * `Droplines_highlowlines_updownbars.R` — line adornments
 #'   * `Histogram_with_args.R` — histogram via clusteredColumn binning
 #'   * `Label_Grouping.R` — multi-level category labels
+#'   * `Load_and_extend.R` — load a chart back from a workbook and extend its range
+#'   * `Chart_template.R` — save a chart as a .crtx template, read and apply it
 #'   * `Line.R` — line with markers and global data labels
 #'   * `New_chart_types.R` — 0.11 showcase: pie/bar of pie, all 3D types,
 #'     display units, tick skips, directional error bars
@@ -190,8 +192,8 @@ EncharterBase <- R6::R6Class(
     plot_style  = list(fill = NULL, line = NULL, line_width = 1),
 
     #' @field label_params Named list of global data label defaults:
-    #'   `show_val`, `show_cat`, `show_legend_key` (logicals),
-    #'   `pos` (character), `style` (list).
+    #'   `show_val`, `show_cat`, `show_legend_key`, `leader_lines` (logicals),
+    #'   `pos`, `sep`, `fill` (character), `style` (list).
     label_params  = list(show_val = FALSE, show_cat = FALSE, show_legend_key = FALSE, pos = "t", style = list()),
     #' @field legend_params Named list of legend defaults:
     #'   `pos` (character), `overlay` ("0"/"1"), `style` (list).
@@ -639,7 +641,12 @@ EncharterBase <- R6::R6Class(
             theme_idx <- as.integer(color_val)
             val_name <- theme_map[as.numeric(theme_idx) + 1]
           }
-          xml_add_child(node, "a:schemeClr", val = val_name)
+          scheme <- xml_add_child(node, "a:schemeClr", val = val_name)
+          # luminance modifiers kept by encharter_load() on theme colors
+          lum_mod <- attr(color_val, "lumMod")
+          lum_off <- attr(color_val, "lumOff")
+          if (!is.null(lum_mod)) xml_add_child(scheme, "a:lumMod", val = as.character(round(lum_mod * 100000)))
+          if (!is.null(lum_off)) xml_add_child(scheme, "a:lumOff", val = as.character(round(lum_off * 100000)))
           return()
         }
 
@@ -671,6 +678,10 @@ EncharterBase <- R6::R6Class(
     # render_color_core. Returns silently for NULL or "auto" (no fill emitted).
     render_color = function(parent_node, color_val) {
       if (is.null(color_val) || identical(color_val, "auto")) return()
+      if (identical(color_val, "none")) {
+        xml_add_child(parent_node, "a:noFill")
+        return()
+      }
       private$render_color_core(
         xml_add_child(parent_node, "a:solidFill"),
         color_val

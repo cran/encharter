@@ -19,11 +19,13 @@ chartex
 clusteredColumn
 codecov
 coneToMax
+crtx
 cust
 dashDot
 dml
 enum
 gridline
+gridlines
 guid
 hardcoding
 img
@@ -50,6 +52,7 @@ summarises
 th
 treemap
 trendline
+trendlines
 validator
 wb
 xsd

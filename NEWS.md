@@ -1,4 +1,80 @@
-# encharter 0.11 (development)
+# encharter 0.12 (development)
+
+## Bug fixes
+
+* Radar series are written with their color (line color, or the fill of a
+  filled radar); before, Excel used its automatic colors for them.
+
+* Loaded series without a color of their own take the theme accents in
+  turn, as the application colors them, instead of all becoming blue;
+  `plot()` does the same for series without a color.
+
+* `c:logBase` is written first within `c:scaling`, as the schema requires.
+  A logarithmic axis produced a chart that Excel removed on opening.
+
+* Scatter and bubble series with text x values write them as a string
+  reference (`c:strRef`) instead of a number cache holding text, which
+  made Excel repair the file.
+
+* 3D bar and area charts only get a series axis (`c:serAx`) with the
+  `"standard"` grouping. With a series axis present, a `"clustered"` 3D
+  column chart was rendered with its series in rows along the depth rather
+  than side by side.
+
+* Bar series are written with `<c:invertIfNegative val="0"/>` unless
+  `invert_if_negative = TRUE`. Without the element, negative bars appeared
+  inverted (white with an outline) in Excel.
+
+## New features
+
+* `encharter_load()` / `ec_load()` read a chart from a workbook back into a
+  `Chart` or `ChartEx` object, so charts can be reloaded, modified and added
+  again. Charts written by other applications load as well. New `$update_series()`
+  on both classes to change an existing series. Loading has seen limited testing;
+  unusual charts may not survive a round trip unchanged.
+
+* Chart templates: `encharter_to_crtx()` / `ec_to_crtx()` save a `Chart` as a
+  chart template (`.crtx`), `encharter_from_crtx()` / `ec_from_crtx()`
+  read one into a `Chart` whose `$add_series()` picks up the template's series
+  styling, and `$apply_crtx()` copies a template's styling onto an existing
+  chart.
+
+* Loading keeps more of what a file says: deleted axes, per-series data
+  label settings, labels and formatting of single points (`c:dLbl`,
+  `c:dPt`, including manual label offsets), and a fixed plot area position
+  (`c:manualLayout`). `render()` writes all of these back.
+
+* Text properties round-trip more faithfully: a chart-level default text
+  style (`c:chartSpace/c:txPr`, new field `$text_style`) is loaded, written and
+  used by `plot()` for text without its own; the paragraph alignment of data
+  labels (`align`), leader line settings (`leader_lines`), explicit "no fill"
+  and "no line" of the chart and plot area (`"none"`), and literal categories
+  next to referenced values are kept, as are text box insets and anchoring
+  and the category axis label offset (`label_offset`). Text without an
+  explicit size no longer gets `sz="1000"` written, so it inherits the chart
+  default. Axis bounds, units and cached values are written without
+  scientific notation. Outlines of bars, areas and single points (`border`)
+  and the line width of category axes are kept, and horizontal bar charts
+  get their axes positioned left and bottom. Templates hand bar direction,
+  grouping, overlap, gap width, outlines and label settings of their series
+  to series added later, and `$apply_crtx()` copies the chart text defaults.
+
+* `plot()` methods for `Chart` and `ChartEx` objects draw the chart with grid,
+  following what a spreadsheet application renders from the written OOXML:
+  automatic axis scaling, primary and secondary axes, tick marks, gridlines,
+  legend, data labels, trendlines, error bars, stock charts (high-low lines,
+  drop lines, up-down bars), pie of pie and bar of pie, the 3D column, bar,
+  line, area and pie types and surface charts (contour and 3D, including
+  wireframes), and the extended types waterfall, box-and-whisker, histogram,
+  Pareto, funnel, treemap and sunburst. Region maps are not drawn; they need
+  shape data the package does not ship. Value axes of data well away from
+  zero start below the values, as in Excel, and date axes label the base
+  units rather than their boundaries. Also drawn: data tables, overlaid
+  legends, legend keys and bubble sizes in data labels, trendline intercepts,
+  value axes crossing at the categories (`cross_between = "midCat"`),
+  doughnut rings for every series and pie labels outside the slices.
+
+# encharter 0.11
 
 ## New features
 

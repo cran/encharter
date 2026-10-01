@@ -1,7 +1,7 @@
 Package: encharter
 Type: Package
 Title: Enhanced Office Open XML Charting for 'openxlsx2'
-Version: 0.11
+Version: 0.12
 Language: en-US
 Authors@R: c(
     person("Jan Marvin", "Garbuszus", email = "jan.garbuszus@ruhr-uni-bochum.de", role = c("aut", "cre"))
@@ -16,13 +16,13 @@ URL: https://janmarvin.github.io/encharter/,
 BugReports: https://github.com/JanMarvin/encharter/issues
 Encoding: UTF-8
 LinkingTo: openxlsx2
-Imports: R6, openxlsx2 (>= 1.26)
-Suggests: testthat (>= 3.0.0), viridisLite
+Imports: R6, grDevices, grid, openxlsx2 (>= 1.26), stats, utils
+Suggests: testthat (>= 3.0.0), vdiffr, viridisLite, withr
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.1.0
 NeedsCompilation: yes
-Packaged: 2026-09-05 08:34:46 UTC; janmarvingarbuszus
+Packaged: 2026-10-01 20:34:30 UTC; janmarvingarbuszus
 Author: Jan Marvin Garbuszus [aut, cre]
 Maintainer: Jan Marvin Garbuszus <jan.garbuszus@ruhr-uni-bochum.de>
 Repository: CRAN
-Date/Publication: 2026-09-05 16:10:03 UTC
+Date/Publication: 2026-10-01 21:10:02 UTC

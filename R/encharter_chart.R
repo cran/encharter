@@ -62,6 +62,16 @@ Chart <- R6::R6Class(
     bar_shape = NULL,
     #' @field size_represents Character; bubble size meaning, "area" or "w".
     size_represents = NULL,
+    #' @field template List of series styles from a chart template; see
+    #'   [encharter_from_crtx()].
+    template = list(),
+    #' @field plot_layout Fixed position of the plot area as fractions of the
+    #'   chart (`x`, `y`, `w`, `h`, `target`), or `NULL` for automatic layout.
+    plot_layout = NULL,
+    #' @field text_style Default text properties of the chart (`font_size`,
+    #'   `font_name`, `font_color`, `bold`, `italic`), used by text without
+    #'   its own.
+    text_style = list(),
 
     #' @description Initialize a new Chart object.
     #' @param type Initial chart type (e.g., "lineChart", "barChart", "pieChart").
@@ -461,6 +471,29 @@ Chart <- R6::R6Class(
                           filled = FALSE, error_bars = FALSE, trendline = FALSE,
                           invert_if_negative = FALSE) {
 
+      # styling from a chart template for the arguments not given
+      if (length(self$template)) {
+        tpl <- self$template[[(length(self$series_data) %% length(self$template)) + 1]]
+        if (missing(color) && !is.null(tpl$line$color)) color <- tpl$line$color
+        if (missing(line_width) && !is.null(tpl$line$width)) line_width <- tpl$line$width
+        if (missing(line_type) && !is.null(tpl$line$type)) line_type <- tpl$line$type
+        if (missing(show_line) && !is.null(tpl$line$show)) show_line <- tpl$line$show
+        if (missing(marker) && !is.null(tpl$marker$symbol)) marker <- tpl$marker$symbol
+        if (missing(marker_size) && !is.null(tpl$marker$size)) marker_size <- tpl$marker$size
+        if (missing(marker_fill) && !is.null(tpl$marker$fill)) marker_fill <- tpl$marker$fill
+        if (missing(marker_line) && !is.null(tpl$marker$line$color)) marker_line <- tpl$marker$line$color
+        if (missing(marker_line_width) && !is.null(tpl$marker$line$width)) marker_line_width <- tpl$marker$line$width
+        if (missing(smooth) && !is.null(tpl$smooth)) smooth <- tpl$smooth
+        if (missing(invert_if_negative) && !is.null(tpl$invert_if_negative)) invert_if_negative <- tpl$invert_if_negative
+        if (missing(type) && !is.null(tpl$type)) type <- tpl$type
+        if (missing(secondary) && !is.null(tpl$sec_type)) secondary <- switch(tpl$sec_type, none = FALSE, y = TRUE, tpl$sec_type)
+        if (missing(dir) && !is.null(tpl$dir)) dir <- tpl$dir
+        if (missing(grouping) && !is.null(tpl$grouping)) grouping <- tpl$grouping
+        if (missing(overlap) && !is.null(tpl$overlap)) overlap <- tpl$overlap
+        if (missing(gap_width) && !is.null(tpl$gap_width)) gap_width <- tpl$gap_width
+        if (missing(filled) && !is.null(tpl$filled)) filled <- tpl$filled
+      }
+
       type <- normalize_encharter_type(type)
       private$validate_input(
         type,
@@ -514,8 +547,9 @@ Chart <- R6::R6Class(
       self$type <- series_type
       if (!is.null(color) && length(color) > 1 && series_type %in% c("bubbleChart", "pieChart", "doughnutChart")) self$palette <- color
 
-      h_expr <- substitute(name)
-      c_expr <- substitute(label)
+      h_label <- tryCatch(if (is.symbol(substitute(name))) deparse1(substitute(name)) else name, error = function(e) NULL)
+      c_label <- tryCatch(if (is.symbol(substitute(label))) deparse1(substitute(label)) else label, error = function(e) NULL)
+      z_label <- tryCatch(if (is.symbol(substitute(weight))) deparse1(substitute(weight)) else weight, error = function(e) NULL)
 
       if (is.null(color)) {
         color_idx <- (length(self$series_data) %% length(self$palette)) + 1
@@ -525,48 +559,18 @@ Chart <- R6::R6Class(
       data_vals <- NULL
       cat_vals <- NULL
       z_vals <- NULL
+      name_vals <- NULL
       if (inherits(data, "wb_data")) {
-        wb_sheet   <- attr(data, "sheet")
-        dims_mat   <- attr(data, "dims")
-        col_names  <- names(data)
+        res <- private$resolve_wb_data(data, h_label, c_label, z_label)
+        name_vals <- if (!is.null(res$name)) h_label
+        name      <- res$name
+        data      <- res$data
+        label     <- res$label
+        weight    <- res$weight
+        data_vals <- res$data_vals
+        cat_vals  <- res$cat_vals
+        z_vals    <- res$z_vals
 
-        # Deterministic name detection based on row counts
-        has_header <- nrow(dims_mat) > length(attr(data, "row.names"))
-
-        h_label <- tryCatch(if (is.symbol(h_expr)) deparse1(h_expr) else name, error = function(e) NULL)
-        c_label <- tryCatch(if (is.symbol(c_expr)) deparse1(c_expr) else label, error = function(e) NULL)
-
-        # For weight, we handle the NSE expression locally
-        z_expr  <- substitute(weight)
-        z_label <- tryCatch(if (is.symbol(z_expr)) deparse1(z_expr) else weight, error = function(e) NULL)
-
-        start_row <- if (has_header) 2 else 1
-        wd_orig <- data
-
-        # 1. Resolve Column Index for Y-Data and Header
-        col_idx <- which(col_names == h_label)
-        if (length(col_idx) > 0) {
-          col_idx   <- col_idx[1]
-          data_vals <- wd_orig[[h_label]]
-          name      <- if (has_header) sprintf("%s!%s", wb_sheet, dims_mat[1, col_idx]) else NULL
-          data      <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, col_idx], dims_mat[nrow(dims_mat), col_idx])
-        }
-
-        # 2. Resolve Category (label / X-Axis)
-        cat_idx <- which(col_names == c_label)
-        if (length(cat_idx) > 0) {
-          cat_idx  <- cat_idx[1]
-          cat_vals <- wd_orig[[c_label]]
-          label    <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, cat_idx], dims_mat[nrow(dims_mat), cat_idx])
-        }
-
-        # 3. Resolve Z-Data (Bubble Size)
-        z_idx <- which(col_names == z_label)
-        if (length(z_idx) > 0) {
-          z_idx  <- z_idx[1]
-          z_vals <- wd_orig[[z_label]]
-          weight <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, z_idx], dims_mat[nrow(dims_mat), z_idx])
-        }
       }
 
       # Apply absolute reference wrapper to all potential range strings
@@ -585,6 +589,7 @@ Chart <- R6::R6Class(
         data      = data,
         label     = label,
         weight    = weight,
+        name_cache = name_vals,
         data_cache = data_vals,
         cat_cache = cat_vals,
         z_cache   = z_vals,
@@ -626,7 +631,210 @@ Chart <- R6::R6Class(
         label_pos   = self$label_params$pos
         #  label_style = self$label_params$style currently unused?
       )
+      if (length(self$template)) {
+        n <- length(self$series_data)
+        self$series_data[[n]]$border <- tpl$border
+        self$series_data[[n]]$label_params <- tpl$label_params
+      }
 
+      invisible(self)
+    },
+
+    #' @description Apply the styling of a chart template (`.crtx`) to this
+    #'   chart: chart and plot area, title and legend style, axes, and the
+    #'   styling of the series in order. Series data, ranges and titles are
+    #'   kept. Series added afterwards take the template styling as well.
+    #' @param path Path of the `.crtx` file.
+    #' @return The chart, invisibly.
+    apply_crtx = function(path) {
+      tpl <- encharter_from_crtx(path)
+      self$chart_style <- tpl$chart_style
+      self$plot_style <- tpl$plot_style
+      self$text_style <- tpl$text_style
+      self$legend_params <- tpl$legend_params
+      self$label_params <- tpl$label_params
+      self$chart_title$style <- tpl$chart_title$style
+      for (nm in c("x_title", "y_title", "x2_title", "y2_title")) {
+        if (!is.null(self[[nm]]$text)) self[[nm]]$style <- tpl[[nm]]$style
+      }
+      for (nm in names(self$axis_params)) {
+        self$axis_params[[nm]] <- tpl$axis_params[[nm]]
+      }
+      self$palette <- tpl$palette
+      self$template <- tpl$template
+      if (length(tpl$template)) {
+        for (i in seq_along(self$series_data)) {
+          t <- tpl$template[[(i - 1) %% length(tpl$template) + 1]]
+          s <- self$series_data[[i]]
+          s$line <- t$line
+          s$border <- t$border
+          s$marker <- t$marker
+          s$smooth <- t$smooth
+          s$invert_if_negative <- t$invert_if_negative
+          s$label_params <- t$label_params
+          for (f in c("dir", "grouping", "overlap", "gap_width", "filled")) s[f] <- t[f]
+          self$series_data[[i]] <- s
+        }
+      }
+      invisible(self)
+    },
+
+    #' @description Change an existing series. Takes the arguments of
+    #'   `add_series()`; arguments that are not supplied keep their current
+    #'   value. With a `wb_data()` object as `data` and no `name`, the column
+    #'   is found from the series' current header (or data) cell, so
+    #'   `update_series(data = wb_data(wb), label = Month)` re-points every
+    #'   series at the current extent of the data.
+    #' @param index Integer vector of series to update. Default: all series.
+    #' @param name,data,label,weight,color,type,secondary,dir,grouping,overlap,gap_width,smooth,show_line,marker,marker_size,marker_fill,marker_line,marker_line_width,line_type,line_width,line_color,filled,error_bars,trendline,invert_if_negative
+    #'   See `add_series()`.
+    #' @examples
+    #' wb <- openxlsx2::wb_workbook()$add_worksheet("Data")$add_data(
+    #'   x = data.frame(Month = month.abb[1:6], Sales = 1:6))
+    #' chart <- ec("line")$add_series(name = Sales, data = openxlsx2::wb_data(wb), label = Month)
+    #' wb$add_data(x = data.frame(Month = "Jul", Sales = 7), dims = "A8", col_names = FALSE)
+    #' chart$update_series(data = openxlsx2::wb_data(wb), label = Month, color = "C00000")
+    update_series = function(index = NULL, name = NULL, data = NULL, label = NULL, weight = NULL,
+                             color = NULL, type = NULL, secondary = NULL, dir = NULL, grouping = NULL,
+                             overlap = NULL, gap_width = NULL, smooth = NULL, show_line = NULL,
+                             marker = NULL, marker_size = NULL, marker_fill = NULL, marker_line = NULL,
+                             marker_line_width = NULL, line_type = NULL, line_width = NULL,
+                             line_color = NULL, filled = NULL, error_bars = NULL, trendline = NULL,
+                             invert_if_negative = NULL) {
+
+      n <- length(self$series_data)
+      if (n == 0) stop("The chart has no series to update.", call. = FALSE)
+      if (is.null(index)) index <- seq_len(n)
+      if (!is.numeric(index) || anyNA(index) || any(index < 1) || any(index > n)) {
+        stop(sprintf("'index' must be between 1 and %d.", n), call. = FALSE)
+      }
+
+      h_label <- tryCatch(if (is.symbol(substitute(name))) deparse1(substitute(name)) else name, error = function(e) NULL)
+      c_label <- tryCatch(if (is.symbol(substitute(label))) deparse1(substitute(label)) else label, error = function(e) NULL)
+      z_label <- tryCatch(if (is.symbol(substitute(weight))) deparse1(substitute(weight)) else weight, error = function(e) NULL)
+
+      if (!is.null(type)) {
+        type <- normalize_encharter_type(type)
+        private$validate_input(type, ENCHARTER_STANDARD, "series type")
+      }
+      if (!is.null(marker)) {
+        marker <- private$validate_input(marker, c("none", "circle", "dash", "diamond", "dot", "plus", "square", "star", "triangle", "x"), "marker")
+      }
+      if (!is.null(dir)) {
+        dir <- private$validate_input(normalize_encharter_string(dir), c("col", "bar"), "dir")
+      }
+      if (!is.null(grouping)) {
+        grouping <- private$validate_input(grouping, c("standard", "clustered", "stacked", "percentStacked"), "grouping")
+      }
+      if (!is.null(line_type)) {
+        private$validate_input(line_type, c("solid", "dash", "dot", "dashDot", "lgDash", "lgDashDot", "sysDash", "sysDot", "dashed", "dotted"), "line_type")
+      }
+      check_num(overlap, "overlap", min = -100, max = 100, integer = TRUE)
+      check_num(gap_width, "gap_width", min = 0, max = 500, integer = TRUE)
+      check_num(marker_size, "marker_size", min = 2, max = 72, integer = TRUE)
+      check_num(line_width, "line_width", min = 0)
+      check_num(marker_line_width, "marker_line_width", min = 0)
+      if (!is.null(trendline)) check_trendline(trendline)
+      if (!is.null(error_bars)) check_error_bars(error_bars)
+      check_bool(smooth, "smooth")
+      check_bool(show_line, "show_line")
+      check_bool(filled, "filled")
+      check_bool(invert_if_negative, "invert_if_negative")
+      color       <- check_color(color, "color")
+      line_color  <- check_color(line_color, "line_color")
+      marker_fill <- check_color(marker_fill, "marker_fill")
+      marker_line <- check_color(marker_line, "marker_line")
+      sec_val <- if (is.null(secondary)) NULL else if (isTRUE(secondary)) "y"
+        else if (isFALSE(secondary)) "none"
+        else match.arg(secondary, c("x", "y", "xy", "none"))
+
+      for (i in index) {
+        s <- self$series_data[[i]]
+        for (nm in c("name", "data", "label", "weight")) {
+          if (!nm %in% names(s)) s[nm] <- list(NULL)
+        }
+
+        if (inherits(data, "wb_data")) {
+          # without a name the column is taken from the series' own header
+          # (or first data) cell
+          this_h <- h_label
+          if (is.null(this_h)) {
+            src <- if (!is.null(s$name) && grepl("!.+", s$name)) s$name else s$data
+            if (!is.null(src)) {
+              cell <- gsub("\\$", "", sub("^.*!", "", src))
+              cell <- sub(":.*$", "", cell)
+              col  <- sub("[0-9]+$", "", cell)
+              dims_cols <- sub("[0-9]+$", "", attr(data, "dims")[1, ])
+              this_h <- names(data)[match(col, dims_cols)]
+            }
+          }
+          res <- private$resolve_wb_data(data, this_h, c_label, z_label)
+          if (is.null(res$data)) {
+            stop(sprintf("series %d: object '%s' not found in the wb_data object", i, this_h %||% ""), call. = FALSE)
+          }
+          if (!is.null(res$data)) {
+            s$name       <- to_abs_ref(res$name)
+            s$name_cache <- if (!is.null(res$name)) this_h
+            s$data       <- to_abs_ref(res$data)
+            s$data_cache <- res$data_vals
+          }
+          if (!is.null(res$label)) {
+            s$label     <- to_abs_ref(res$label)
+            s$cat_cache <- res$cat_vals
+          }
+          if (!is.null(res$weight)) {
+            s$weight  <- to_abs_ref(res$weight)
+            s$z_cache <- res$z_vals
+          }
+        } else {
+          if (!is.null(name)) {
+            s$name <- to_abs_ref(name)
+            s["name_cache"] <- list(NULL)
+          }
+          if (!is.null(data)) {
+            if (!grepl("!", data)) stop("Series data must be a sheet reference (e.g., 'Sheet1!A1:A10').", call. = FALSE)
+            s$data <- to_abs_ref(data)
+            s["data_cache"] <- list(NULL)
+          }
+          if (!is.null(label)) {
+            s$label <- to_abs_ref(label)
+            s["cat_cache"] <- list(NULL)
+          }
+          if (!is.null(weight)) {
+            s$weight <- to_abs_ref(weight)
+            s["z_cache"] <- list(NULL)
+          }
+        }
+
+        if (!is.null(color)) {
+          s$line$color        <- line_color %||% color
+          s$marker$fill       <- marker_fill %||% color
+          s$marker$line$color <- marker_line %||% color
+        }
+        if (!is.null(line_color))        s$line$color <- line_color
+        if (!is.null(line_width))        s$line$width <- line_width
+        if (!is.null(line_type))         s$line$type  <- line_type
+        if (!is.null(show_line))         s$line$show  <- show_line
+        if (!is.null(marker))            s$marker$symbol <- marker
+        if (!is.null(marker_size))       s$marker$size   <- marker_size
+        if (!is.null(marker_fill))       s$marker$fill   <- marker_fill
+        if (!is.null(marker_line))       s$marker$line$color <- marker_line
+        if (!is.null(marker_line_width)) s$marker$line$width <- marker_line_width
+        if (!is.null(type))              s$type      <- type
+        if (!is.null(sec_val))           s$sec_type  <- sec_val
+        if (!is.null(dir))               s$dir       <- dir
+        if (!is.null(grouping))          s$grouping  <- grouping
+        if (!is.null(overlap))           s$overlap   <- overlap
+        if (!is.null(gap_width))         s$gap_width <- gap_width
+        if (!is.null(smooth))            s$smooth    <- smooth
+        if (!is.null(filled))            s$filled    <- filled
+        if (!is.null(error_bars))        s$error_bars <- error_bars
+        if (!is.null(trendline))         s$trendline  <- trendline
+        if (!is.null(invert_if_negative)) s$invert_if_negative <- invert_if_negative
+
+        self$series_data[[i]] <- s
+      }
+      if (!is.null(type)) self$type <- type
       invisible(self)
     },
 
@@ -644,7 +852,9 @@ Chart <- R6::R6Class(
 
       self$type <- self$type %||% "barChart"
       xml_remove(xml_find_all(self$xml, "c:spPr"))
+      xml_remove(xml_find_all(self$xml, "c:txPr"))
       private$apply_sp_pr(self$xml, self$chart_style)
+      if (length(self$text_style) > 0) private$apply_text_style(self$xml, self$text_style)
 
       chart_root <- xml_find_first(self$xml, "//c:chart")
       xml_remove(xml_children(chart_root))
@@ -661,7 +871,19 @@ Chart <- R6::R6Class(
       }
 
       plot_area <- xml_add_child(chart_root, "c:plotArea")
-      xml_add_child(plot_area, "c:layout")
+      layout <- xml_add_child(plot_area, "c:layout")
+      # a fixed plot area position (fractions of the chart), as loaded from
+      # a file
+      if (!is.null(self$plot_layout)) {
+        ml <- xml_add_child(layout, "c:manualLayout")
+        xml_add_child(ml, "c:layoutTarget", val = self$plot_layout$target %||% "inner")
+        xml_add_child(ml, "c:xMode", val = "edge")
+        xml_add_child(ml, "c:yMode", val = "edge")
+        xml_add_child(ml, "c:x", val = as.character(self$plot_layout$x))
+        xml_add_child(ml, "c:y", val = as.character(self$plot_layout$y))
+        xml_add_child(ml, "c:w", val = as.character(self$plot_layout$w))
+        xml_add_child(ml, "c:h", val = as.character(self$plot_layout$h))
+      }
 
       id_prim_cat <- u_ids[1]
       id_prim_val <- u_ids[2]
@@ -698,6 +920,7 @@ Chart <- R6::R6Class(
       }
 
       has_axes <- FALSE
+      depth_rows <- FALSE
       for (combo in combos) {
         sub_series <- Filter(function(x) x$type == combo$type && x$sec_type == combo$sec_type, self$series_data)
 
@@ -714,8 +937,12 @@ Chart <- R6::R6Class(
           val_id <- id_prim_val
         }
 
-        # Surface and 3D chart groups reference a third (series) axis
-        ser_ax_id <- if (combo$type %in% c("surfaceChart", "bar3DChart", "line3DChart", "area3DChart", "surface3DChart")) id_ser_ax else NULL
+        # Surface and 3D chart groups reference a third (series) axis; a 3D
+        # bar or area chart only with the standard grouping, which puts the
+        # series into rows along the depth
+        depth_rows <- combo$type %in% c("surfaceChart", "line3DChart", "surface3DChart") ||
+          (combo$type %in% c("bar3DChart", "area3DChart") && identical(sub_series[[1]]$grouping %||% "standard", "standard"))
+        ser_ax_id <- if (depth_rows) id_ser_ax else NULL
 
         private$render_series_node(plot_area, sub_series, combo$type, cat_id, val_id, ser_ax_id)
 
@@ -727,20 +954,26 @@ Chart <- R6::R6Class(
         needs_sec_y <- !is_3d && any(vapply(self$series_data, function(x) x$sec_type %in% c("y", "xy"), FALSE))
         needs_sec_x <- !is_3d && any(vapply(self$series_data, function(x) x$sec_type %in% c("x", "xy"), FALSE))
 
-        # 2. Primary X-Axis (Bottom)
+        # with horizontal bars the category axis sits on the left and the
+        # value axis at the bottom
+        horizontal <- all(vapply(self$series_data, function(x) x$type %in% c("barChart", "bar3DChart") && identical(x$dir, "bar"), logical(1)))
+        cat_pos <- if (horizontal) "l" else "b"
+        val_pos <- if (horizontal) "b" else "l"
+
+        # 2. Primary X-Axis
         # Always rendered
         if (self$type %in% c("scatterChart", "bubbleChart")) {
-          private$render_val_ax(plot_area, id_prim_cat, id_prim_val, "b", title_obj = self$x_title, params = self$axis_params$x)
+          private$render_val_ax(plot_area, id_prim_cat, id_prim_val, cat_pos, title_obj = self$x_title, params = self$axis_params$x)
         } else {
-          private$render_cat_ax(plot_area, id_prim_cat, id_prim_val, "b", delete = "0", title_obj = self$x_title, params = self$axis_params$x)
+          private$render_cat_ax(plot_area, id_prim_cat, id_prim_val, cat_pos, delete = "0", title_obj = self$x_title, params = self$axis_params$x)
         }
 
-        # 3. Primary Y-Axis (Left)
+        # 3. Primary Y-Axis
         # Always rendered
         if (self$type == "surfaceChart") {
-          private$render_val_ax(plot_area, id_prim_val, id_prim_cat, "l", delete = "1", title_obj = self$y_title, params = self$axis_params$y)
+          private$render_val_ax(plot_area, id_prim_val, id_prim_cat, val_pos, delete = "1", title_obj = self$y_title, params = self$axis_params$y)
         } else {
-          private$render_val_ax(plot_area, id_prim_val, id_prim_cat, "l", title_obj = self$y_title, params = self$axis_params$y)
+          private$render_val_ax(plot_area, id_prim_val, id_prim_cat, val_pos, title_obj = self$y_title, params = self$axis_params$y)
         }
         # 3. Primary Y-Axis (Left / Vertical Height)
 
@@ -763,7 +996,7 @@ Chart <- R6::R6Class(
           }
         }
 
-        if (self$type %in% c("surfaceChart", "bar3DChart", "line3DChart", "area3DChart", "surface3DChart")) {
+        if (depth_rows) {
           private$render_ser_ax(plot_area, id_ser_ax, id_prim_val)
         }
       }
@@ -797,6 +1030,46 @@ Chart <- R6::R6Class(
 
   private = list(
     current_idx = 0,
+
+    # Turns a wb_data() object plus column names into sheet references and
+    # cached values. Columns that are not found return NULL.
+    resolve_wb_data = function(data, h_label, c_label, z_label) {
+      wb_sheet  <- attr(data, "sheet")
+      dims_mat  <- attr(data, "dims")
+      col_names <- names(data)
+      has_header <- nrow(dims_mat) > length(attr(data, "row.names"))
+      start_row  <- if (has_header) 2 else 1
+
+      out <- list(name = NULL, data = NULL, label = NULL, weight = NULL,
+                  data_vals = NULL, cat_vals = NULL, z_vals = NULL)
+
+      for (lbl in c(h_label, c_label, z_label)) {
+        if (!lbl %in% col_names) stop(sprintf("object '%s' not found in the wb_data object", lbl), call. = FALSE)
+      }
+
+      col_idx <- which(col_names == h_label)
+      if (length(col_idx) > 0) {
+        col_idx <- col_idx[1]
+        out$data_vals <- data[[h_label]]
+        out$name <- if (has_header) sprintf("%s!%s", wb_sheet, dims_mat[1, col_idx]) else NULL
+        out$data <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, col_idx], dims_mat[nrow(dims_mat), col_idx])
+      }
+
+      cat_idx <- which(col_names == c_label)
+      if (length(cat_idx) > 0) {
+        cat_idx <- cat_idx[1]
+        out$cat_vals <- data[[c_label]]
+        out$label <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, cat_idx], dims_mat[nrow(dims_mat), cat_idx])
+      }
+
+      z_idx <- which(col_names == z_label)
+      if (length(z_idx) > 0) {
+        z_idx <- z_idx[1]
+        out$z_vals <- data[[z_label]]
+        out$weight <- sprintf("%s!%s:%s", wb_sheet, dims_mat[start_row, z_idx], dims_mat[nrow(dims_mat), z_idx])
+      }
+      out
+    },
 
     # Emits <c:view3D> for surfaceChart and the 3D chart types.
     # Sequence per CT_View3D: rotX, hPercent, rotY, depthPercent, rAngAx,
@@ -881,8 +1154,12 @@ Chart <- R6::R6Class(
     apply_sp_pr = function(node, style) {
       if (is.null(style$fill) && is.null(style$line)) return()
       spPr <- xml_add_child(node, "c:spPr")
-      if (!is.null(style$fill)) private$render_color_core(xml_add_child(spPr, "a:solidFill"), style$fill)
-      if (!is.null(style$line)) {
+      if (identical(style$fill, "none")) {
+        xml_add_child(spPr, "a:noFill")
+      } else if (!is.null(style$fill)) {
+        private$render_color_core(xml_add_child(spPr, "a:solidFill"), style$fill)
+      }
+      if (!is.null(style$line) && !identical(style$line, "none")) {
         ln <- xml_add_child(spPr, "a:ln", w = as.character(round(style$line_width * 12700)))
         private$render_color_core(xml_add_child(ln, "a:solidFill"), style$line)
       } else {
@@ -895,7 +1172,8 @@ Chart <- R6::R6Class(
 
       # 1. INITIAL PROPERTIES (Must come before <c:ser>)
       if (type == "scatterChart") {
-        xml_add_child(c_node, "c:scatterStyle", val = "lineMarker")
+        any_smooth <- any(vapply(sub_series, function(x) isTRUE(x$smooth), logical(1)))
+        xml_add_child(c_node, "c:scatterStyle", val = if (any_smooth) "smoothMarker" else "lineMarker")
       }
 
       if (type == "ofPieChart") {
@@ -931,6 +1209,11 @@ Chart <- R6::R6Class(
 
       # 2. THE SERIES LOOP
       for (s in sub_series) {
+        # `s$data <- NULL` drops the element and `s$data` would then partially
+        # match `data_cache`; keep the names present.
+        for (nm in c("name", "data", "label", "weight")) {
+          if (!nm %in% names(s)) s[nm] <- list(NULL)
+        }
 
         ser <- xml_add_child(c_node, "c:ser")
         xml_add_child(ser, "c:idx", val = as.character(private$current_idx))
@@ -946,6 +1229,7 @@ Chart <- R6::R6Class(
             # It's a range reference like Sheet1!$A$1
             strRef <- xml_add_child(tx, "c:strRef")
             xml_add_child(strRef, "c:f", s$name)
+            if (!is.null(s$name_cache)) private$render_str_cache(strRef, s$name_cache)
           } else {
             # It's a literal string
             xml_add_child(tx, "c:v", as.character(s$name))
@@ -958,6 +1242,7 @@ Chart <- R6::R6Class(
           if (type %in% c("barChart", "areaChart", "bubbleChart", "bar3DChart", "area3DChart")) {
             color <- s$line$color %||% s$color %||% "auto"
             private$render_color_core(xml_add_child(sp, "a:solidFill"), color)
+            if (is.list(s$border)) private$render_line_style(sp, s$border)
           } else if (type %in% c("lineChart", "scatterChart", "stockChart", "line3DChart")) {
             # If show_line is FALSE, we must explicitly tell OOXML not to draw the line
             if (isFALSE(s$line$show)) {
@@ -966,12 +1251,19 @@ Chart <- R6::R6Class(
             } else {
               private$render_line_style(sp, s$line)
             }
+          } else if (type == "radarChart") {
+            # a filled radar takes the color as area fill, a standard one as line
+            if (isTRUE(s$filled)) {
+              private$render_color_core(xml_add_child(sp, "a:solidFill"), s$line$color %||% "auto")
+            }
+            private$render_line_style(sp, s$line)
           }
         }
 
-        # CT_BarSer: invertIfNegative follows spPr
-        if (type %in% c("barChart", "bar3DChart") && isTRUE(s$invert_if_negative)) {
-          xml_add_child(ser, "c:invertIfNegative", val = "1")
+        # CT_BarSer: invertIfNegative follows spPr. Written for every bar
+        # series: without the element Excel inverts negative bars
+        if (type %in% c("barChart", "bar3DChart")) {
+          xml_add_child(ser, "c:invertIfNegative", val = if (isTRUE(s$invert_if_negative)) "1" else "0")
         }
         # --- EG_SerShared End ---
 
@@ -1014,32 +1306,92 @@ Chart <- R6::R6Class(
             private$render_color_core(xml_add_child(spPr, "a:solidFill"), self$palette[i])
           }
         } else {
-          if (length(s$color) > 1) {
-            # If s$color is a vector, apply colors to individual points
-              for (i in seq_along(s$color)) {
-                dPt <- xml_add_child(ser, "c:dPt")
-                xml_add_child(dPt, "c:idx", val = as.character(i - 1))
-                spPr <- xml_add_child(dPt, "c:spPr")
-                private$render_color_core(xml_add_child(spPr, "a:solidFill"), s$color[i])
+          # per-point formatting (c:dPt): fill colour, or "none" for an
+          # invisible point
+          for (pt in s$points) {
+            dPt <- xml_add_child(ser, "c:dPt")
+            xml_add_child(dPt, "c:idx", val = as.character(pt$idx))
+            if (type %in% c("barChart", "bar3DChart")) {
+              xml_add_child(dPt, "c:invertIfNegative", val = if (isTRUE(s$invert_if_negative)) "1" else "0")
+            }
+            xml_add_child(dPt, "c:bubble3D", val = "0")
+            if (!is.null(pt$marker)) {
+              mk <- xml_add_child(dPt, "c:marker")
+              if (!is.null(pt$marker$symbol)) xml_add_child(mk, "c:symbol", val = pt$marker$symbol)
+              if (!is.null(pt$marker$size)) xml_add_child(mk, "c:size", val = as.character(pt$marker$size))
+              if (!is.null(pt$marker$fill)) {
+                private$render_color_core(xml_add_child(xml_add_child(mk, "c:spPr"), "a:solidFill"), pt$marker$fill)
               }
+            }
+            if (!is.null(pt$color) || !is.null(pt$border)) {
+              spPr <- xml_add_child(dPt, "c:spPr")
+              if (identical(pt$color, "none")) {
+                xml_add_child(spPr, "a:noFill")
+              } else if (!is.null(pt$color)) {
+                private$render_color_core(xml_add_child(spPr, "a:solidFill"), pt$color)
+              }
+              if (identical(pt$border, "none")) {
+                xml_add_child(xml_add_child(spPr, "a:ln"), "a:noFill")
+              } else if (is.list(pt$border)) {
+                private$render_line_style(spPr, pt$border)
+              }
+            }
           }
         }
 
         # 5. dLbls (Data Labels)
         lp <- s$label_params %||% self$label_params
 
-        # Only enter if lp exists AND at least one show flag is TRUE
+        # Only enter if lp exists AND at least one show flag is TRUE, or
+        # single points carry labels of their own
         if (!is.null(lp) && (isTRUE(lp$show_val) || isTRUE(lp$show_cat) || isTRUE(lp$show_legend_key) ||
-                             isTRUE(lp$show_ser_name) || isTRUE(lp$show_percent) || isTRUE(lp$show_bubble_size))) {
+                             isTRUE(lp$show_ser_name) || isTRUE(lp$show_percent) || isTRUE(lp$show_bubble_size) ||
+                             length(s$point_labels) > 0)) {
 
           dLbls <- xml_add_child(ser, "c:dLbls")
+
+          # per-point labels (c:dLbl) come first: a deleted label, or the
+          # settings of that one point
+          for (pl in s$point_labels) {
+            dLbl <- xml_add_child(dLbls, "c:dLbl")
+            xml_add_child(dLbl, "c:idx", val = as.character(pl$idx))
+            if (isTRUE(pl$delete)) {
+              xml_add_child(dLbl, "c:delete", val = "1")
+              next
+            }
+            if (!is.null(pl$dx) || !is.null(pl$dy)) {
+              ml <- xml_add_child(xml_add_child(dLbl, "c:layout"), "c:manualLayout")
+              xml_add_child(ml, "c:x", val = as.character(pl$dx %||% 0))
+              xml_add_child(ml, "c:y", val = as.character(pl$dy %||% 0))
+            }
+            if (!is.null(pl$format)) xml_add_child(dLbl, "c:numFmt", formatCode = pl$format, sourceLinked = "0")
+            if (!is.null(pl$fill)) private$render_color_core(xml_add_child(xml_add_child(dLbl, "c:spPr"), "a:solidFill"), pl$fill)
+            if (length(pl$style) > 0) private$apply_text_style(dLbl, pl$style)
+            if (!is.null(pl$pos) && !type %in% ENCHARTER_3D) {
+              pt_pos <- pl$pos
+              if (type == "barChart") {
+                if (pt_pos == "t") pt_pos <- "outEnd" else if (pt_pos == "b") pt_pos <- "inBase"
+              }
+              xml_add_child(dLbl, "c:dLblPos", val = pt_pos)
+            }
+            xml_add_child(dLbl, "c:showLegendKey",  val = if (isTRUE(pl$show_legend_key)) "1" else "0")
+            xml_add_child(dLbl, "c:showVal",        val = if (isTRUE(pl$show_val)) "1" else "0")
+            xml_add_child(dLbl, "c:showCatName",    val = if (isTRUE(pl$show_cat)) "1" else "0")
+            xml_add_child(dLbl, "c:showSerName",    val = if (isTRUE(pl$show_ser_name)) "1" else "0")
+            xml_add_child(dLbl, "c:showPercent",    val = if (isTRUE(pl$show_percent)) "1" else "0")
+            xml_add_child(dLbl, "c:showBubbleSize", val = if (isTRUE(pl$show_bubble_size)) "1" else "0")
+            if (!is.null(pl$sep)) xml_add_child(dLbl, "c:separator", pl$sep)
+          }
 
           # A. numFmt (must precede spPr/txPr per EG_DLblShared)
           if (!is.null(lp$format)) {
             xml_add_child(dLbls, "c:numFmt", formatCode = lp$format, sourceLinked = "0")
           }
 
-          # B. txPr (Styling)
+          # B. spPr (label background) and txPr (Styling)
+          if (!is.null(lp$fill)) {
+            private$render_color_core(xml_add_child(xml_add_child(dLbls, "c:spPr"), "a:solidFill"), lp$fill)
+          }
           if (length(lp$style) > 0) {
             private$apply_text_style(dLbls, lp$style)
           }
@@ -1065,6 +1417,16 @@ Chart <- R6::R6Class(
           xml_add_child(dLbls, "c:showSerName",    val = if (isTRUE(lp$show_ser_name)) "1" else "0")
           xml_add_child(dLbls, "c:showPercent",    val = if (isTRUE(lp$show_percent)) "1" else "0")
           xml_add_child(dLbls, "c:showBubbleSize", val = if (isTRUE(lp$show_bubble_size)) "1" else "0")
+          if (!is.null(lp$sep)) xml_add_child(dLbls, "c:separator", lp$sep)
+          if (!is.null(lp$leader_lines)) {
+            # the c15 extension is what decides for chart types other than pie
+            val <- if (isTRUE(lp$leader_lines)) "1" else "0"
+            xml_add_child(dLbls, "c:showLeaderLines", val = val)
+            ext <- xml_add_child(xml_add_child(dLbls, "c:extLst"), "c:ext",
+              uri = "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}",
+              `xmlns:c15` = "http://schemas.microsoft.com/office/drawing/2012/chart")
+            xml_add_child(ext, "c15:showLeaderLines", val = val)
+          }
         }
 
         # 1. Trendline (Basic)
@@ -1126,17 +1488,49 @@ Chart <- R6::R6Class(
           }
         }
 
-        # 6. Data References (xVal/yVal or label/val)
-        if (type %in% c("scatterChart", "bubbleChart")) {
+        # 6. Data References (xVal/yVal or label/val). A series without a
+        # reference but with cached values is written as a literal.
+        if (is.null(s$data) && !is.null(s$data_cache)) {
+          if (!is.null(s$cat_cache)) {
+            cat_node <- xml_add_child(ser, if (type %in% c("scatterChart", "bubbleChart")) "c:xVal" else "c:cat")
+            if (is.character(s$cat_cache) || is.factor(s$cat_cache)) {
+              private$render_str_cache(xml_add_child(cat_node, "c:strLit"), s$cat_cache, lit = TRUE)
+            } else {
+              private$render_num_cache(xml_add_child(cat_node, "c:numLit"), s$cat_cache, lit = TRUE)
+            }
+          }
+          val_node <- xml_add_child(ser, if (type %in% c("scatterChart", "bubbleChart")) "c:yVal" else "c:val")
+          private$render_num_cache(xml_add_child(val_node, "c:numLit"), s$data_cache, lit = TRUE)
+          if (type == "bubbleChart") {
+            z_node <- xml_add_child(ser, "c:bubbleSize")
+            private$render_num_cache(xml_add_child(z_node, "c:numLit"), s$z_cache %||% s$data_cache, lit = TRUE)
+          }
+        } else if (type %in% c("scatterChart", "bubbleChart")) {
           if (!is.null(s$label)) {
             x_val_node <- xml_add_child(ser, "c:xVal")
             if (!is.null(s$cat_cache)) {
-              ref_node <- xml_add_child(x_val_node, "c:numRef")
-              xml_add_child(ref_node, "c:f", s$label)
-              private$render_num_cache(ref_node, s$cat_cache)
+              # text x values need a string reference; a number cache with
+              # text in it makes Excel repair the file
+              if (is.character(s$cat_cache) || is.factor(s$cat_cache)) {
+                ref_node <- xml_add_child(x_val_node, "c:strRef")
+                xml_add_child(ref_node, "c:f", s$label)
+                private$render_str_cache(ref_node, s$cat_cache)
+              } else {
+                ref_node <- xml_add_child(x_val_node, "c:numRef")
+                xml_add_child(ref_node, "c:f", s$label)
+                private$render_num_cache(ref_node, s$cat_cache)
+              }
             } else {
               ref_type <- if (grepl("!", s$label)) "c:numRef" else "c:numLit"
               xml_add_child(xml_add_child(x_val_node, ref_type), "c:f", s$label)
+            }
+          } else if (!is.null(s$cat_cache)) {
+            # literal x values next to referenced y values
+            x_val_node <- xml_add_child(ser, "c:xVal")
+            if (is.character(s$cat_cache) || is.factor(s$cat_cache)) {
+              private$render_str_cache(xml_add_child(x_val_node, "c:strLit"), s$cat_cache, lit = TRUE)
+            } else {
+              private$render_num_cache(xml_add_child(x_val_node, "c:numLit"), s$cat_cache, lit = TRUE)
             }
           }
 
@@ -1192,6 +1586,14 @@ Chart <- R6::R6Class(
                             else if (grepl("!", s$label)) "c:strRef"
                             else "c:strLit"
               xml_add_child(xml_add_child(cat_node, c_ref_type), "c:f", s$label)
+            }
+          } else if (!is.null(s$cat_cache)) {
+            # literal categories next to referenced values
+            cat_node <- xml_add_child(ser, "c:cat")
+            if (is.character(s$cat_cache) || is.factor(s$cat_cache)) {
+              private$render_str_cache(xml_add_child(cat_node, "c:strLit"), s$cat_cache, lit = TRUE)
+            } else {
+              private$render_num_cache(xml_add_child(cat_node, "c:numLit"), s$cat_cache, lit = TRUE)
             }
           }
 
@@ -1324,9 +1726,7 @@ Chart <- R6::R6Class(
                       "bar3DChart", "line3DChart", "area3DChart", "surface3DChart")) {
         xml_add_child(c_node, "c:axId", val = as.character(cat_id))
         xml_add_child(c_node, "c:axId", val = as.character(val_id))
-        if (type %in% c("surfaceChart", "bar3DChart", "line3DChart", "area3DChart", "surface3DChart")) {
-          xml_add_child(c_node, "c:axId", val = as.character(ser_id))
-        }
+        if (!is.null(ser_id)) xml_add_child(c_node, "c:axId", val = as.character(ser_id))
       }
     },
 
@@ -1358,13 +1758,15 @@ Chart <- R6::R6Class(
 
       # 1. Identity and Scaling (EG_AxShared Start)
       xml_add_child(ax, "c:axId", val = id)
+      # CT_Scaling: logBase, orientation, max, min
       scaling <- xml_add_child(ax, "c:scaling")
-      xml_add_child(scaling, "c:orientation", val = ifelse(isTRUE(params$rev), "maxMin", "minMax"))
-      if (!is.null(params$max)) xml_add_child(scaling, "c:max", val = as.character(params$max))
-      if (!is.null(params$min)) xml_add_child(scaling, "c:min", val = as.character(params$min))
       if (!is.null(params$log_base)) xml_add_child(scaling, "c:logBase", val = as.character(params$log_base))
+      xml_add_child(scaling, "c:orientation", val = ifelse(isTRUE(params$rev), "maxMin", "minMax"))
+      if (!is.null(params$max)) xml_add_child(scaling, "c:max", val = format(params$max, scientific = FALSE, digits = 15, trim = TRUE))
+      if (!is.null(params$min)) xml_add_child(scaling, "c:min", val = format(params$min, scientific = FALSE, digits = 15, trim = TRUE))
 
       # 2. Basic Properties
+      if (isTRUE(params$delete)) delete <- "1"
       xml_add_child(ax, "c:delete", val = delete)
       xml_add_child(ax, "c:axPos", val = pos)
 
@@ -1402,17 +1804,22 @@ Chart <- R6::R6Class(
 
       # 6. Visual Styles
       ln <- xml_add_child(xml_add_child(ax, "c:spPr"), "a:ln")
-      private$render_color_core(xml_add_child(ln, "a:solidFill"), params$color %||% "000000")
+      if (identical(params$color, "none")) {
+        xml_add_child(ln, "a:noFill")
+      } else {
+        if (!is.null(params$line_width)) xml_set_attr(ln, "w", as.character(round(params$line_width * 12700)))
+        private$render_color_core(xml_add_child(ln, "a:solidFill"), params$color %||% "000000")
+      }
 
       label_style <- params
-      label_style$color <- params$font_color %||% params$color %||% "000000"
+      label_style$color <- params$font_color %||% (if (identical(params$color, "none")) "000000" else params$color) %||% "000000"
       private$apply_text_style(ax, label_style)
       # 7. Crossing (EG_AxShared)
       xml_add_child(ax, "c:crossAx", val = cross_id)
 
       if (!is.null(params$crosses_at)) {
         # Use a specific value (e.g., cross at Y=100)
-        xml_add_child(ax, "c:crossesAt", val = as.character(params$crosses_at))
+        xml_add_child(ax, "c:crossesAt", val = format(params$crosses_at, scientific = FALSE, digits = 15, trim = TRUE))
       } else {
         # Use a preset: 'autoZero', 'min', or 'max'
         # Use the 'crosses' argument passed from the render() function
@@ -1424,26 +1831,27 @@ Chart <- R6::R6Class(
       if (is_date) {
         # Sequence for DateAx: lblOffset -> baseTimeUnit -> majorUnit -> minorUnit
         xml_add_child(ax, "c:auto", val = "1")
-        xml_add_child(ax, "c:lblOffset", val = "100")
+        xml_add_child(ax, "c:lblOffset", val = as.character(params$label_offset %||% 100))
 
         if (!is.null(params$base_time)) {
           private$validate_input(params$base_time, c("days", "months", "years"), "base_time")
           xml_add_child(ax, "c:baseTimeUnit", val = params$base_time)
         }
         if (!is.null(params$major)) {
-          xml_add_child(ax, "c:majorUnit", val = as.character(params$major))
+          xml_add_child(ax, "c:majorUnit", val = format(params$major, scientific = FALSE, digits = 15, trim = TRUE))
           private$validate_input(params$major_time, c("days", "months", "years"), "major_time")
           if (!is.null(params$major_time)) xml_add_child(ax, "c:majorTimeUnit", val = params$major_time)
         }
         if (!is.null(params$minor)) {
-          xml_add_child(ax, "c:minorUnit", val = as.character(params$minor))
+          xml_add_child(ax, "c:minorUnit", val = format(params$minor, scientific = FALSE, digits = 15, trim = TRUE))
           private$validate_input(params$minor_time, c("days", "months", "years"), "minor_time")
           if (!is.null(params$minor_time)) xml_add_child(ax, "c:minorTimeUnit", val = params$minor_time)
         }
       } else {
-        # Sequence for CatAx: auto -> lblAlgn -> lblOffset -> skip logic
-        xml_add_child(ax, "c:auto", val = "1")
-        xml_add_child(ax, "c:lblOffset", val = "100")
+        # Sequence for CatAx: auto -> lblAlgn -> lblOffset -> skip logic.
+        # auto = 0 keeps a text axis for date categories
+        xml_add_child(ax, "c:auto", val = if (isFALSE(params$auto)) "0" else "1")
+        xml_add_child(ax, "c:lblOffset", val = as.character(params$label_offset %||% 100))
         if (!is.null(params$tick_lbl_skip)) xml_add_child(ax, "c:tickLblSkip", val = as.character(params$tick_lbl_skip))
         if (!is.null(params$tick_mark_skip)) xml_add_child(ax, "c:tickMarkSkip", val = as.character(params$tick_mark_skip))
         xml_add_child(ax, "c:noMultiLvlLbl", val = "0")
@@ -1455,13 +1863,15 @@ Chart <- R6::R6Class(
 
       # 1. Identity and Scaling
       xml_add_child(ax, "c:axId", val = id)
+      # CT_Scaling: logBase, orientation, max, min
       scaling <- xml_add_child(ax, "c:scaling")
-      xml_add_child(scaling, "c:orientation", val = ifelse(isTRUE(params$rev), "maxMin", "minMax"))
-      if (!is.null(params$max)) xml_add_child(scaling, "c:max", val = as.character(params$max))
-      if (!is.null(params$min)) xml_add_child(scaling, "c:min", val = as.character(params$min))
       if (!is.null(params$log_base)) xml_add_child(scaling, "c:logBase", val = as.character(params$log_base))
+      xml_add_child(scaling, "c:orientation", val = ifelse(isTRUE(params$rev), "maxMin", "minMax"))
+      if (!is.null(params$max)) xml_add_child(scaling, "c:max", val = format(params$max, scientific = FALSE, digits = 15, trim = TRUE))
+      if (!is.null(params$min)) xml_add_child(scaling, "c:min", val = format(params$min, scientific = FALSE, digits = 15, trim = TRUE))
 
       # 2. Delete and Position
+      if (isTRUE(params$delete)) delete <- "1"
       xml_add_child(ax, "c:delete", val = delete)
       xml_add_child(ax, "c:axPos", val = pos)
 
@@ -1499,11 +1909,15 @@ Chart <- R6::R6Class(
       xml_add_child(ax, "c:tickLblPos", val = params$label_pos %||% "nextTo")
 
       # 6. Shape and Text Properties
-      ax_style <- list(color = params$color %||% "000000", width = params$line_width)
-      private$render_line_style(xml_add_child(ax, "c:spPr"), ax_style)
+      if (identical(params$color, "none")) {
+        xml_add_child(xml_add_child(xml_add_child(ax, "c:spPr"), "a:ln"), "a:noFill")
+      } else {
+        ax_style <- list(color = params$color %||% "000000", width = params$line_width)
+        private$render_line_style(xml_add_child(ax, "c:spPr"), ax_style)
+      }
 
       label_style <- params
-      label_style$color <- params$font_color %||% params$color %||% "000000"
+      label_style$color <- params$font_color %||% (if (identical(params$color, "none")) "000000" else params$color) %||% "000000"
       private$apply_text_style(ax, label_style)
 
       # 7. Crossing Properties (End of EG_AxShared)
@@ -1511,7 +1925,7 @@ Chart <- R6::R6Class(
       cross_val <- params$crosses %||% crosses
       if (!is.null(params$crosses_at)) {
         # If a specific value is provided, it overrides the 'crosses' string
-        xml_add_child(ax, "c:crossesAt", val = as.character(params$crosses_at))
+        xml_add_child(ax, "c:crossesAt", val = format(params$crosses_at, scientific = FALSE, digits = 15, trim = TRUE))
       } else {
         xml_add_child(ax, "c:crosses", val = cross_val)
       }
@@ -1519,12 +1933,12 @@ Chart <- R6::R6Class(
       xml_add_child(ax, "c:crossBetween", val = cb_val)
 
       # 8. Units (End of ValAx)
-      if (!is.null(params$major)) xml_add_child(ax, "c:majorUnit", val = as.character(params$major))
-      if (!is.null(params$minor)) xml_add_child(ax, "c:minorUnit", val = as.character(params$minor))
+      if (!is.null(params$major)) xml_add_child(ax, "c:majorUnit", val = format(params$major, scientific = FALSE, digits = 15, trim = TRUE))
+      if (!is.null(params$minor)) xml_add_child(ax, "c:minorUnit", val = format(params$minor, scientific = FALSE, digits = 15, trim = TRUE))
       if (!is.null(params$disp_units)) {
         du <- xml_add_child(ax, "c:dispUnits")
         if (is.numeric(params$disp_units)) {
-          xml_add_child(du, "c:custUnit", val = as.character(params$disp_units))
+          xml_add_child(du, "c:custUnit", val = format(params$disp_units, scientific = FALSE, digits = 15, trim = TRUE))
         } else {
           xml_add_child(du, "c:builtInUnit", val = params$disp_units)
         }
@@ -1548,8 +1962,8 @@ Chart <- R6::R6Class(
     # Emit a c:numCache block into ref_node.
     # Date/POSIXt values are converted to OOXML serials via convert_to_excel_date.
     # Plain numeric values are written as-is.
-    render_num_cache = function(ref_node, vals) {
-      cache <- xml_add_child(ref_node, "c:numCache")
+    render_num_cache = function(ref_node, vals, lit = FALSE) {
+      cache <- if (lit) ref_node else xml_add_child(ref_node, "c:numCache")
       if (inherits(vals, c("Date", "POSIXt"))) {
         vals <- openxlsx2::convert_to_excel_date(data.frame(d = vals))[[1]]
 
@@ -1563,14 +1977,14 @@ Chart <- R6::R6Class(
       for (i in seq_along(vals)) {
         if (!is.na(vals[[i]])) {
           pt <- xml_add_child(cache, "c:pt", idx = as.character(i - 1))
-          xml_add_child(pt, "c:v", as.character(vals[[i]]))
+          xml_add_child(pt, "c:v", format(vals[[i]], scientific = FALSE, digits = 15, trim = TRUE))
         }
       }
     },
 
     # Emit a c:strCache block into ref_node for character/factor categories.
-    render_str_cache = function(ref_node, vals) {
-      cache <- xml_add_child(ref_node, "c:strCache")
+    render_str_cache = function(ref_node, vals, lit = FALSE) {
+      cache <- if (lit) ref_node else xml_add_child(ref_node, "c:strCache")
       xml_add_child(cache, "c:ptCount", val = as.character(length(vals)))
       for (i in seq_along(vals)) {
         if (!is.na(vals[[i]])) {
@@ -1584,15 +1998,14 @@ Chart <- R6::R6Class(
       txPr <- xml_add_child(node, "c:txPr")
 
       # 1. Create body properties and apply rotation
-      bodyPr <- xml_add_child(
-        txPr, "a:bodyPr",
-        lIns = "0", tIns = "0", rIns = "0", bIns = "0", wrap = "square"
-      )
+      body_attrs <- if (is.null(s$body_pr)) list(lIns = "0", tIns = "0", rIns = "0", bIns = "0", wrap = "square") else s$body_pr
+      bodyPr <- do.call(xml_add_child, c(list(txPr, "a:bodyPr"), body_attrs))
       if (!is.null(s$rotation)) {
         # rotation = degrees * 60000
         xml_set_attr(bodyPr, "rot", as.character(round(s$rotation * 60000)))
         xml_set_attr(bodyPr, "vert", "horz")
       }
+      if (isTRUE(s$auto_fit)) xml_add_child(bodyPr, "a:spAutoFit")
 
       # 2. Add required list style
       xml_add_child(txPr, "a:lstStyle")
@@ -1600,11 +2013,11 @@ Chart <- R6::R6Class(
       # 3. Build the text run properties (defRPr)
       p      <- xml_add_child(txPr, "a:p")
       pPr    <- xml_add_child(p, "a:pPr")
+      if (!is.null(s$align)) xml_set_attr(pPr, "algn", s$align)
       defRPr <- xml_add_child(pPr, "a:defRPr")
 
-      # Apply font size (OOXML uses 1/100th of a point)
-      sz <- if (!is.null(s$font_size)) s$font_size * 100 else 1000
-      xml_set_attr(defRPr, "sz", as.character(sz))
+      # font size in 1/100 pt; without one the text takes the chart default
+      if (!is.null(s$font_size)) xml_set_attr(defRPr, "sz", as.character(s$font_size * 100))
 
       if (isTRUE(s$bold)) xml_set_attr(defRPr, "b", "1")
       if (isTRUE(s$italic)) xml_set_attr(defRPr, "i", "1")
